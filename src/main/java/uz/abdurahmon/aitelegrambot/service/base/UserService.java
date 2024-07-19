@@ -6,4 +6,8 @@ import uz.abdurahmon.aitelegrambot.entity.dto.LoginDto;
 public interface UserService {
     User getByChatId(Long chatId);
     void login(LoginDto loginDto);
+
+    void save(User user);
+
+    void deleteById(Long userId);
 }

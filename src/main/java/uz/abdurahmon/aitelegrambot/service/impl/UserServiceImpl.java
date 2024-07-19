@@ -28,4 +28,14 @@ public class UserServiceImpl implements UserService {
         user.setPhoneNumber(loginDto.getPhoneNumber());
         userRepository.save(user);
     }
+
+    @Override
+    public void save(User user) {
+        userRepository.save(user);
+    }
+
+    @Override
+    public void deleteById(Long userId) {
+        userRepository.deleteById(userId);
+    }
 }

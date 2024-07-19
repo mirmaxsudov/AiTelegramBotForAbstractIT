@@ -6,14 +6,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
+import org.telegram.telegrambots.meta.api.methods.send.SendAudio;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
-import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
-import org.telegram.telegrambots.meta.api.objects.Contact;
-import org.telegram.telegrambots.meta.api.objects.Message;
-import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeChat;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import uz.abdurahmon.aitelegrambot.config.BotConfiguration;
 import uz.abdurahmon.aitelegrambot.entity.User;
 import uz.abdurahmon.aitelegrambot.entity.dto.LoginDto;
@@ -24,6 +23,7 @@ import uz.abdurahmon.aitelegrambot.service.bot.enums.Operation;
 import uz.abdurahmon.aitelegrambot.service.bot.replyMarkups.ReplyMarkup;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.HashMap;
@@ -121,23 +121,103 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
         if (isUsed) return;
 
         switch (operation) {
+            case TEXT_TO_SPEECH -> textToSpeech(chatId, messageId, user, text);
+        }
+    }
 
+    private void textToSpeech(Long chatId, int messageId, User user, String text) {
+        Language language = user.getLanguage();
+        sendMessage(chatId, language.equals(Language.ENGLISH) ? "Processing... ⏳" : language.equals(Language.UZBEK) ? "Ishlanmoqda ... ⏳" : language.equals(Language.RUSSIAN) ? "Обработка... ⏳" : "Qayta ishlanmoqda ... ⏳");
+
+        SendAudio audio = new SendAudio();
+        audio.setChatId(chatId);
+        audio.setReplyToMessageId(messageId);
+        audio.setAudio(new InputFile(
+                new File(
+                        "src/main/resources/files/audio.mp3"
+                )
+        ));
+        audio.setPerformer("Abdurahmon");
+        audio.setTitle("Text to speech");
+        audio.setCaption(language.equals(Language.ENGLISH) ? "Done ✅" : language.equals(Language.UZBEK) ? "Yakunlandi ✅" : "Готово ✅");
+
+        try {
+            execute(audio);
+        } catch (TelegramApiException e) {
+            log.error(e.getMessage(), e);
+        } finally {
+            MP.remove(chatId);
         }
     }
 
     private void showUserMenu(Long chatId, Language language) {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId);
-        sendMessage.setText(language.equals(Language.ENGLISH) ? "Choose" : "Tanlang");
+        sendMessage.setText(language.equals(Language.ENGLISH) ? "Choose" : language.equals(Language.UZBEK) ? "Tanlang" : "Выбирать");
         sendMessage.setReplyMarkup(getReplyKeyboardMainMenuForUser(language));
         executeCustom(sendMessage);
     }
 
     private boolean forUserMenu(Long chatId, Integer messageId, String text, User user) {
         switch (text) {
-            case "Biz haqimizda ℹ️", "About us ℹ️" -> aboutUs(chatId, messageId, user);
+            case "Text to speech 🔊" -> textToSpeech(chatId, messageId, user);
+            case "Biz haqimizda ℹ️", "About us ℹ️", "О нас ℹ️" -> aboutUs(chatId, messageId, user);
+            case "Sozlamalar ⚙️", "Settings ⚙️", "Настройки ⚙️" -> settings(chatId, user);
+            case "Orqaga ⬅️", "Back ⬅️", "Назад ⬅️" -> showUserMenu(chatId, user.getLanguage());
+            case "Change language 🇺🇸🇺🇿🇷🇺", "Tilni o'zgartirish 🇺🇿🇷🇺🇺🇸", "Изменить язык 🇷🇺🇺🇸🇺🇿" ->
+                    changeLanguage(chatId, messageId, user);
+            case "Cache tozalash ♻️", "Clear cache ♻️", "Очистить кэш ♻️" -> clearCache(chatId, user);
         }
         return false;
+    }
+
+    private void textToSpeech(Long chatId, Integer messageId, User user) {
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setReplyToMessageId(messageId);
+        message.setText(user.getLanguage().equals(Language.ENGLISH) ?
+                "Enter text" : user.getLanguage().equals(Language.UZBEK) ?
+                "Matn kiriting" : "Введи текст");
+
+        MP.put(chatId, Operation.TEXT_TO_SPEECH);
+        executeCustom(message);
+    }
+
+    private void clearCache(Long chatId, User user) {
+        Language language = user.getLanguage();
+
+        sendMessage(chatId, language.equals(Language.ENGLISH) ? "Your datas are being clearing🧹" : language.equals(Language.UZBEK) ? "Siz ma'lumotlarni tozalanmoqda🧹" : "Ваши данные очищаются🧹");
+
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            log.error(e.getMessage());
+        }
+
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setReplyMarkup(deleteReplyMarkup());
+        message.setText(language.equals(Language.ENGLISH) ? "Cleared🧹" : language.equals(Language.UZBEK) ? "Tozalandi🧹" : "Очищено🧹");
+        executeCustom(message);
+
+        userService.deleteById(user.getId());
+    }
+
+    private void changeLanguage(Long chatId, Integer messageId, User user) {
+        user.setLanguage(user.getLanguage().equals(Language.ENGLISH) ? Language.UZBEK : user.getLanguage().equals(Language.UZBEK) ? Language.RUSSIAN : Language.ENGLISH);
+        userService.save(user);
+        settings(chatId, user);
+    }
+
+    private void settings(Long chatId, User user) {
+        SendMessage mainSettings = new SendMessage();
+        mainSettings.setChatId(chatId);
+        mainSettings.setText(user.getLanguage().equals(Language.ENGLISH) ? "Settings choose" :
+                user.getLanguage().equals(Language.UZBEK) ?
+                        "Sozlamalar oynasiga xush kelibsiz" :
+                        "Настройки выбираются");
+        mainSettings.setReplyMarkup(getReplyKeyboardForSettings(user.getLanguage()));
+        executeCustom(mainSettings);
     }
 
     private void aboutUs(Long chatId, Integer messageId, User user) {
@@ -146,12 +226,11 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
     }
 
     private String getAboutUsByLanguage(Language language) {
-        String filePath;
-        if (language.equals(Language.ENGLISH)) {
-            filePath = "src/main/resources/aboutUsEng.txt";
-        } else {
-            filePath = "src/main/resources/aboutUsUz.txt";
-        }
+        String filePath = switch (language) {
+            case UZBEK -> "src/main/resources/aboutUsUz.txt";
+            case RUSSIAN -> "src/main/resources/aboutUsRu.txt";
+            default -> "src/main/resources/aboutUsEng.txt";
+        };
 
         BufferedReader reader = null;
         StringBuilder stringBuilder = new StringBuilder();
@@ -160,10 +239,10 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
             reader = new BufferedReader(new FileReader(filePath));
             String currentLine;
 
-            while ((currentLine = reader.readLine()) != null) {
+            while ((currentLine = reader.readLine()) != null)
                 stringBuilder.append(currentLine).append("\n");
-            }
-        } catch (IOException e) {
+        } catch (
+                IOException e) {
             e.printStackTrace();
         } finally {
             try {

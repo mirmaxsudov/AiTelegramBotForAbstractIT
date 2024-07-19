@@ -1,7 +1,7 @@
 package uz.abdurahmon.aitelegrambot.entity.enums;
 
 public enum Language {
-    ENGLISH("English 🇺🇸"), UZBEK("Uzbek 🇺🇿");
+    ENGLISH("English 🇺🇸"), UZBEK("Uzbek 🇺🇿"), RUSSIAN("Russian 🇷🇺");
 
     private final String name;
 

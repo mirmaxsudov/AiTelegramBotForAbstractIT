@@ -73,13 +73,49 @@ public interface ReplyMarkup {
             rw3.add("Feedback 📝");
             rw4.add("About us ℹ️");
             rw4.add("Settings ⚙️");
-        } else {
+        } else if (language.equals(Language.UZBEK)) {
             rw3.add("Xabar berish 📝");
             rw4.add("Biz haqimizda ℹ️");
             rw4.add("Sozlamalar ⚙️");
+        } else {
+            rw3.add("Отправить сообщение 📝");
+            rw4.add("О нас ℹ️");
+            rw4.add("Настройки ⚙️");
         }
 
         markup.setKeyboard(List.of(rw1, rw2, rw3, rw4));
+
+        return markup;
+    }
+
+    default ReplyKeyboardMarkup getReplyKeyboardForSettings(Language language) {
+        ReplyKeyboardMarkup markup = new ReplyKeyboardMarkup();
+        markup.setSelective(false);
+        markup.setResizeKeyboard(true);
+        markup.setOneTimeKeyboard(false);
+
+        KeyboardRow rw1 = new KeyboardRow();
+        KeyboardRow rw2 = new KeyboardRow();
+        KeyboardRow rw3 = new KeyboardRow();
+
+        if (language.equals(Language.ENGLISH)) {
+            rw1.add("Change language 🇺🇸🇺🇿🇷🇺");
+            rw2.add("About me ℹ️");
+            rw2.add("Clear cache ♻️");
+            rw3.add("Back ⬅️");
+        } else if (language.equals(Language.UZBEK)) {
+            rw1.add("Tilni o'zgartirish 🇺🇿🇷🇺🇺🇸");
+            rw2.add("Men haqimda ℹ️");
+            rw2.add("Cache tozalash ♻️");
+            rw3.add("Orqaga ⬅️");
+        } else {
+            rw1.add("Изменить язык 🇷🇺🇺🇸🇺🇿");
+            rw2.add("О себе ℹ️");
+            rw2.add("Очистить кэш ♻️");
+            rw3.add("Назад ⬅️");
+        }
+
+        markup.setKeyboard(List.of(rw1, rw2, rw3));
 
         return markup;
     }

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Contact;
 import org.telegram.telegrambots.meta.api.objects.Message;
@@ -22,6 +23,9 @@ import uz.abdurahmon.aitelegrambot.service.base.UserService;
 import uz.abdurahmon.aitelegrambot.service.bot.enums.Operation;
 import uz.abdurahmon.aitelegrambot.service.bot.replyMarkups.ReplyMarkup;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +54,17 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
         }
     }
 
+
+    @Override
+    public String getBotUsername() {
+        return botConfiguration.getBotName();
+    }
+
+    @Override
+    public String getBotToken() {
+        return botConfiguration.getBotToken();
+    }
+
     @Override
     public void onUpdateReceived(Update update) {
         CompletableFuture.runAsync(() -> {
@@ -65,29 +80,100 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
     private final static Map<Long, LoginDto> LOGIN_DTO_MAP = new HashMap<>();
 
     private void proccessCallbackQuery(CallbackQuery callbackQuery) {
-
     }
 
     private void proccessUpdate(Message message) {
         final Long chatId = message.getChatId();
         final String text = message.getText();
-        final Integer messageId = message.getMessageId();
+        final int messageId = message.getMessageId();
+        final User user = userService.getByChatId(chatId);
         final Operation operation = MP.get(chatId);
-
-        User user = userService.getByChatId(chatId);
 
         if (user == null) {
             if (operation == null) {
                 login(chatId, messageId);
-            } else if (message.hasContact() && operation.equals(Operation.LOGIN_PHONE_NUMBER)) {
-                login(chatId, messageId, message.getContact());
-            } else if (operation.equals(Operation.LOGIN_LANGUAGE)) {
-                login(chatId, messageId, text);
+            } else {
+                switch (operation) {
+                    case LOGIN_PHONE_NUMBER -> {
+                        login(chatId, messageId, message.getContact());
+                    }
+                    case LOGIN_LANGUAGE -> {
+                        login(chatId, messageId, text);
+                    }
+                }
             }
             return;
         }
 
+        final UserRole role = user.getUserRole();
+        boolean isUsed = false;
 
+        if (text.equals("/start")) {
+            switch (role) {
+                case USER -> showUserMenu(chatId, user.getLanguage());
+            }
+
+            return;
+        }
+
+        if (role.equals(UserRole.USER)) isUsed = forUserMenu(chatId, messageId, text, user);
+
+        if (isUsed) return;
+
+        switch (operation) {
+
+        }
+    }
+
+    private void showUserMenu(Long chatId, Language language) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.setChatId(chatId);
+        sendMessage.setText(language.equals(Language.ENGLISH) ? "Choose" : "Tanlang");
+        sendMessage.setReplyMarkup(getReplyKeyboardMainMenuForUser(language));
+        executeCustom(sendMessage);
+    }
+
+    private boolean forUserMenu(Long chatId, Integer messageId, String text, User user) {
+        switch (text) {
+            case "Biz haqimizda ℹ️", "About us ℹ️" -> aboutUs(chatId, messageId, user);
+        }
+        return false;
+    }
+
+    private void aboutUs(Long chatId, Integer messageId, User user) {
+        String aboutUs = getAboutUsByLanguage(user.getLanguage());
+        sendMessage(chatId, aboutUs);
+    }
+
+    private String getAboutUsByLanguage(Language language) {
+        String filePath;
+        if (language.equals(Language.ENGLISH)) {
+            filePath = "src/main/resources/aboutUsEng.txt";
+        } else {
+            filePath = "src/main/resources/aboutUsUz.txt";
+        }
+
+        BufferedReader reader = null;
+        StringBuilder stringBuilder = new StringBuilder();
+
+        try {
+            reader = new BufferedReader(new FileReader(filePath));
+            String currentLine;
+
+            while ((currentLine = reader.readLine()) != null) {
+                stringBuilder.append(currentLine).append("\n");
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                if (reader != null) reader.close();
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+        return stringBuilder.toString();
     }
 
     private void login(Long chatId, int messageId, String language) {
@@ -168,15 +254,5 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
         } catch (Exception e) {
             log.error("Error occurred: ", e);
         }
-    }
-
-    @Override
-    public String getBotUsername() {
-        return botConfiguration.getBotName();
-    }
-
-    @Override
-    public String getBotToken() {
-        return botConfiguration.getBotToken();
     }
 }

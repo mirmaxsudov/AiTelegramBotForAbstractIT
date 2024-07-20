@@ -19,7 +19,7 @@ public interface ReplyMarkup {
 
         KeyboardButton phone = new KeyboardButton();
         phone.setRequestContact(true);
-        phone.setText("Enter your phone number");
+        phone.setText("Telefon raqamni yuborish📞");
 
         KeyboardRow rw1 = new KeyboardRow();
         rw1.add(phone);
@@ -116,6 +116,34 @@ public interface ReplyMarkup {
         }
 
         markup.setKeyboard(List.of(rw1, rw2, rw3));
+
+        return markup;
+    }
+
+    default ReplyKeyboardMarkup getReplyKeyboardForImageToText(Language language) {
+        ReplyKeyboardMarkup markup = new ReplyKeyboardMarkup();
+        markup.setSelective(false);
+        markup.setResizeKeyboard(true);
+        markup.setOneTimeKeyboard(false);
+
+        KeyboardRow rw1 = new KeyboardRow();
+        KeyboardRow rw2 = new KeyboardRow();
+
+        if (language.equals(Language.UZBEK)) {
+            rw1.add("Linkni yuborish 📤");
+            rw1.add("Rasmni yuborish 📷");
+            rw2.add("Orqaga ⬅️");
+        } else if (language.equals(Language.ENGLISH)) {
+            rw1.add("Send link 📤");
+            rw1.add("Send image 📷");
+            rw2.add("Back ⬅️");
+        } else {
+            rw1.add("Отправить ссылку 📤");
+            rw1.add("Отправить изображение 📷");
+            rw2.add("Назад ⬅️");
+        }
+
+        markup.setKeyboard(List.of(rw1, rw2));
 
         return markup;
     }

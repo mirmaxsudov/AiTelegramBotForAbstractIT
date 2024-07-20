@@ -1,14 +1,17 @@
 package uz.abdurahmon.aitelegrambot.service.bot;
 
+import lombok.SneakyThrows;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
+import org.telegram.telegrambots.meta.api.methods.AnswerPreCheckoutQuery;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendAudio;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage;
+import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
 import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeChat;
@@ -18,8 +21,10 @@ import uz.abdurahmon.aitelegrambot.entity.User;
 import uz.abdurahmon.aitelegrambot.entity.dto.LoginDto;
 import uz.abdurahmon.aitelegrambot.entity.enums.Language;
 import uz.abdurahmon.aitelegrambot.entity.enums.UserRole;
+import uz.abdurahmon.aitelegrambot.service.base.DownloadImgService;
 import uz.abdurahmon.aitelegrambot.service.base.UserService;
 import uz.abdurahmon.aitelegrambot.service.bot.enums.Operation;
+import uz.abdurahmon.aitelegrambot.service.bot.inlineKeyBoards.InlineMarkup;
 import uz.abdurahmon.aitelegrambot.service.bot.replyMarkups.ReplyMarkup;
 
 import java.io.BufferedReader;
@@ -29,19 +34,20 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 @Service
 @SuppressWarnings("all")
-public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
+public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, InlineMarkup {
     private static final Logger log = LoggerFactory.getLogger(TelegramBot.class);
     private final BotConfiguration botConfiguration;
     private final UserService userService;
+    private final DownloadImgService downloadImgService;
 
     @Autowired
-    public TelegramBot(UserService userService, BotConfiguration botConfiguration) {
+    public TelegramBot(UserService userService, BotConfiguration botConfiguration, DownloadImgService downloadImgService) {
         this.userService = userService;
         this.botConfiguration = botConfiguration;
+        this.downloadImgService = downloadImgService;
 
         List<BotCommand> commands = List.of(
                 new BotCommand("/start", "Start the bot🔰"),
@@ -67,13 +73,15 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
 
     @Override
     public void onUpdateReceived(Update update) {
-        CompletableFuture.runAsync(() -> {
+        try {
             if (update.hasMessage()) {
                 proccessUpdate(update.getMessage());
             } else if (update.hasCallbackQuery()) {
                 proccessCallbackQuery(update.getCallbackQuery());
             }
-        });
+        } catch (Exception e) {
+            log.error("Error occurred: {}", e.getMessage());
+        }
     }
 
     private final static Map<Long, Operation> MP = new HashMap<>();
@@ -122,6 +130,45 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
 
         switch (operation) {
             case TEXT_TO_SPEECH -> textToSpeech(chatId, messageId, user, text);
+            case IMAGE_TO_TEXT_ASKED_IMG_LINK -> imageToTextAskedLink(chatId, messageId, user, text);
+        }
+    }
+
+    private void imageToTextAskedLink(Long chatId, int messageId, User user, String text) {
+        MP.remove(chatId);
+
+        Language language = user.getLanguage();
+        sendMessage(chatId, language.equals(Language.ENGLISH) ? "Processing... ⏳" :
+                language.equals(Language.UZBEK) ? "Yuklanmoqda ... ⏳" : "Обработка ... ⏳");
+        String download = downloadImgService.download(text);
+
+        if (download == null) {
+            sendMessage(
+                    chatId, language.equals(Language.ENGLISH) ? "While processing, Error occurred ... ⏳" :
+                            language.equals(Language.UZBEK) ? "Qayta ishlash jarayonida xatolik yuz berdi ... ⏳" : "Во время обработки произошла ошибка ... ⏳"
+            );
+            return;
+        }
+
+        SendPhoto photo = new SendPhoto();
+        photo.setChatId(chatId);
+        photo.setReplyToMessageId(messageId);
+        photo.setPhoto(new InputFile(new File(download)));
+        photo.setCaption(
+                language.equals(Language.ENGLISH) ? "Do you want to analyze this image?" :
+                        language.equals(Language.UZBEK) ? "Rasmni analiz qilmoqchimisiz?" :
+                                "Вы хотите проанализировать эту картинку?"
+        );
+        photo.setReplyMarkup(getInlineKeyboardMarkupToAskAnalyzeImage(user));
+
+        executeCustom(photo);
+    }
+
+    private void executeCustom(SendPhoto photo) {
+        try {
+            execute(photo);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
         }
     }
 
@@ -159,16 +206,66 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
     }
 
     private boolean forUserMenu(Long chatId, Integer messageId, String text, User user) {
+        boolean isUsed = false;
         switch (text) {
-            case "Text to speech 🔊" -> textToSpeech(chatId, messageId, user);
-            case "Biz haqimizda ℹ️", "About us ℹ️", "О нас ℹ️" -> aboutUs(chatId, messageId, user);
-            case "Sozlamalar ⚙️", "Settings ⚙️", "Настройки ⚙️" -> settings(chatId, user);
-            case "Orqaga ⬅️", "Back ⬅️", "Назад ⬅️" -> showUserMenu(chatId, user.getLanguage());
-            case "Change language 🇺🇸🇺🇿🇷🇺", "Tilni o'zgartirish 🇺🇿🇷🇺🇺🇸", "Изменить язык 🇷🇺🇺🇸🇺🇿" ->
-                    changeLanguage(chatId, messageId, user);
-            case "Cache tozalash ♻️", "Clear cache ♻️", "Очистить кэш ♻️" -> clearCache(chatId, user);
+            case "Image to text 📝" -> {
+                imageToText(chatId, messageId, user);
+                isUsed = true;
+            }
+            case "Linkni yuborish 📤", "Отправить ссылку 📤", "Send link 📤" -> {
+                sendLinkForImageToText(chatId, messageId, user);
+                isUsed = true;
+            }
+            case "Text to speech 🔊" -> {
+                textToSpeech(chatId, messageId, user);
+                isUsed = true;
+            }
+            case "Biz haqimizda ℹ️", "About us ℹ️", "О нас ℹ️" -> {
+                aboutUs(chatId, messageId, user);
+                isUsed = true;
+            }
+            case "Sozlamalar ⚙️", "Settings ⚙️", "Настройки ⚙️" -> {
+                settings(chatId, user);
+                isUsed = true;
+            }
+            case "Orqaga ⬅️", "Back ⬅️", "Назад ⬅️" -> {
+                showUserMenu(chatId, user.getLanguage());
+                isUsed = true;
+            }
+            case "Change language 🇺🇸🇺🇿🇷🇺", "Tilni o'zgartirish 🇺🇿🇷🇺🇺🇸", "Изменить язык 🇷🇺🇺🇸🇺🇿" -> {
+                changeLanguage(chatId, messageId, user);
+                isUsed = true;
+            }
+            case "Cache tozalash ♻️", "Clear cache ♻️", "Очистить кэш ♻️" -> {
+                clearCache(chatId, user);
+                isUsed = true;
+            }
         }
-        return false;
+        return isUsed;
+    }
+
+    private void sendLinkForImageToText(Long chatId, Integer messageId, User user) {
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setReplyToMessageId(messageId);
+        message.setText(user.getLanguage().equals(Language.ENGLISH) ?
+                "Enter link" : user.getLanguage().equals(Language.UZBEK) ?
+                "Linkni kiriting" : "Введи ссылку");
+
+        MP.put(chatId, Operation.IMAGE_TO_TEXT_ASKED_IMG_LINK);
+        executeCustom(message);
+    }
+
+    private void imageToText(Long chatId, int messageId, User user) {
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setReplyToMessageId(messageId);
+        message.setReplyMarkup(getReplyKeyboardForImageToText(user.getLanguage()));
+        message.setText(user.getLanguage().equals(Language.ENGLISH) ?
+                "Choose option" : user.getLanguage().equals(Language.UZBEK) ?
+                "Tanlang" : "Выберите опцию");
+
+        executeCustom(message);
     }
 
     private void textToSpeech(Long chatId, Integer messageId, User user) {
@@ -255,6 +352,7 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
         return stringBuilder.toString();
     }
 
+    @SneakyThrows
     private void login(Long chatId, int messageId, String language) {
         if (!checkLan(language)) {
             sendMessage(chatId, "Choose correct language");
@@ -269,12 +367,7 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
         MP.remove(chatId);
         LOGIN_DTO_MAP.remove(chatId);
 
-        SendMessage success = new SendMessage();
-        success.setChatId(chatId);
-        success.setText("Choose");
-        success.setReplyMarkup(deleteReplyMarkup());
-
-        executeCustom(success);
+        showUserMenu(chatId, loginDto.getLanguage());
     }
 
     private void sendMessage(Long chatId, String text) {
@@ -301,7 +394,11 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup {
         MP.put(chatId, Operation.LOGIN_LANGUAGE);
 
         SendMessage message = new SendMessage();
-        message.setText("Enter your language");
+        message.setText("""
+                O'zingizga mos keladigan tillarni tanlang
+                Choose your suitable language
+                Выберите подходящий язык
+                """);
         message.setReplyMarkup(replyForLoginLanguage());
         message.setReplyToMessageId(messageId);
         message.setChatId(chatId);

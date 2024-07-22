@@ -5,4 +5,6 @@ import uz.abdurahmon.aitelegrambot.entity.User;
 
 public interface AttachmentService {
     Attachment save(String url, User user);
+
+    Attachment getById(Long attachmentId);
 }

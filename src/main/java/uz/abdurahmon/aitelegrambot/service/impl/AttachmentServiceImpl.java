@@ -21,4 +21,9 @@ public class AttachmentServiceImpl implements AttachmentService {
         attachmentRepository.save(attachment);
         return attachment;
     }
+
+    @Override
+    public Attachment getById(Long attachmentId) {
+        return attachmentRepository.findById(attachmentId).orElse(null);
+    }
 }

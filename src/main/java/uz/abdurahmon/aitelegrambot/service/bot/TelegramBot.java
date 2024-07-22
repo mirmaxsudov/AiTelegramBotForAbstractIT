@@ -136,7 +136,20 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
     }
 
     private void sendAttachmentToAnalyze(String data, User user, int messageId) {
+        Long attachmentId;
+        try {
+            attachmentId = Long.parseLong(data.split(" ")[1]);
+        } catch (Exception e) {
+            log.error("Error occurred: {}", e.getMessage());
+            return;
+        }
 
+        Attachment attachment = attachmentService.getById(attachmentId);
+
+        if (attachment == null)
+            return;
+
+        sendMessage(user.getChatId(), "Done");
     }
 
     private void deleteFeedback(String data, User user, int messageId, String callbackId) {

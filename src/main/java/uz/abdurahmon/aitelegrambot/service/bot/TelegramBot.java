@@ -132,7 +132,26 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
             deleteFeedback(data, user, messageId, callbackQuery.getId());
         } else if (data.startsWith("SEND_ATTACHMENT_TO_ANALYZE: ")) {
             sendAttachmentToAnalyze(data, user, messageId);
+        } else if (data.startsWith("DELETE_ATTACHMENT: ")) {
+            System.out.println("messageId = " + messageId);
+            System.out.println("chatId = " + chatId);
+            deleteAttachment(data, messageId, user);
         }
+    }
+
+    private void deleteAttachment(String data, int messageId, User user) {
+        Long attachmentId = Long.valueOf(data.split(" ")[1]);
+        attachmentService.deleteById(attachmentId);
+
+        EditMessageText editMessageText = new EditMessageText();
+        editMessageText.setText(
+                user.getLanguage().equals(Language.UZBEK) ? "O'chirib yuborildi" :
+                        user.getLanguage().equals(Language.ENGLISH) ?
+                                "Deleted successfully" : "Удален успешно"
+        );
+        editMessageText.setChatId(user.getChatId());
+        editMessageText.setMessageId(messageId);
+        executeCustom(editMessageText);
     }
 
     private void sendAttachmentToAnalyze(String data, User user, int messageId) {
@@ -340,7 +359,15 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
                 String url = downloadImgToLocalAndReturnURL(user, photo);
                 imageToSpeech(user, messageId, url);
             }
+            case IMAGE_TO_TEXT_INNER_ASKED_IMAGE -> {
+                String url = downloadImgToLocalAndReturnURL(user, photo);
+                imageToText(user, messageId, url);
+            }
         }
+    }
+
+    private void imageToText(User user, int messageId, String url) {
+
     }
 
     private void imageToSpeech(User user, int messageId, String imgURL) {
@@ -511,6 +538,10 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
     private boolean forUserMenu(Long chatId, Integer messageId, String text, User user) {
         boolean isUsed = false;
         switch (text) {
+            case "Send image \uD83D\uDCF7" -> {
+                imageToTextInner(user);
+                isUsed = true;
+            }
             case "Image to speech 📝" -> {
                 imageToSpeech(chatId, messageId, user);
                 isUsed = true;
@@ -561,6 +592,15 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
             }
         }
         return isUsed;
+    }
+
+    private void imageToTextInner(User user) {
+        Language language = user.getLanguage();
+
+        sendMessage(user.getChatId(),
+                language.equals(Language.ENGLISH) ? "Send image" :
+                        language.equals(Language.UZBEK) ? "Rasm yuboring" : "Введи изображение");
+        MP.put(user.getChatId(), Operation.IMAGE_TO_TEXT_INNER_ASKED_IMAGE);
     }
 
     private void imageToSpeech(Long chatId, Integer messageId, User user) {

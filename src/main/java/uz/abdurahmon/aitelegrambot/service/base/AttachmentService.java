@@ -7,4 +7,6 @@ public interface AttachmentService {
     Attachment save(String url, User user);
 
     Attachment getById(Long attachmentId);
+
+    void deleteById(Long attachmentId);
 }

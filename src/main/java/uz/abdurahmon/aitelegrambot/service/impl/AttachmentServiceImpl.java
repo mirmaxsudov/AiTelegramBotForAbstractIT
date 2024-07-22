@@ -26,4 +26,9 @@ public class AttachmentServiceImpl implements AttachmentService {
     public Attachment getById(Long attachmentId) {
         return attachmentRepository.findById(attachmentId).orElse(null);
     }
+
+    @Override
+    public void deleteById(Long attachmentId) {
+        attachmentRepository.deleteById(attachmentId);
+    }
 }

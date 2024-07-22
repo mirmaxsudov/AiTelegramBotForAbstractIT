@@ -17,11 +17,11 @@ public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
     private Long id;
-    private String username;
     private String firstName;
     private String lastName;
     private String phoneNumber;
     private Long chatId;
+    private boolean isDeleted;
     @Enumerated(EnumType.STRING)
     private Language language;
     @Enumerated(EnumType.STRING)

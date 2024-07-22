@@ -5,23 +5,30 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
-import org.telegram.telegrambots.meta.api.methods.AnswerPreCheckoutQuery;
+import org.telegram.telegrambots.meta.api.methods.GetFile;
+import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendAudio;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeChat;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import uz.abdurahmon.aitelegrambot.config.BotConfiguration;
+import uz.abdurahmon.aitelegrambot.entity.Attachment;
+import uz.abdurahmon.aitelegrambot.entity.Feedback;
 import uz.abdurahmon.aitelegrambot.entity.User;
 import uz.abdurahmon.aitelegrambot.entity.dto.LoginDto;
 import uz.abdurahmon.aitelegrambot.entity.enums.Language;
 import uz.abdurahmon.aitelegrambot.entity.enums.UserRole;
+import uz.abdurahmon.aitelegrambot.service.base.AttachmentService;
 import uz.abdurahmon.aitelegrambot.service.base.DownloadImgService;
+import uz.abdurahmon.aitelegrambot.service.base.FeedbackService;
 import uz.abdurahmon.aitelegrambot.service.base.UserService;
 import uz.abdurahmon.aitelegrambot.service.bot.enums.Operation;
 import uz.abdurahmon.aitelegrambot.service.bot.inlineKeyBoards.InlineMarkup;
@@ -31,9 +38,15 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @SuppressWarnings("all")
@@ -41,12 +54,16 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
     private static final Logger log = LoggerFactory.getLogger(TelegramBot.class);
     private final BotConfiguration botConfiguration;
     private final UserService userService;
+    private final FeedbackService feedbackService;
+    private final AttachmentService attachmentService;
     private final DownloadImgService downloadImgService;
 
     @Autowired
-    public TelegramBot(UserService userService, BotConfiguration botConfiguration, DownloadImgService downloadImgService) {
+    public TelegramBot(UserService userService, BotConfiguration botConfiguration, FeedbackService feedbackService, AttachmentService attachmentService, DownloadImgService downloadImgService) {
         this.userService = userService;
         this.botConfiguration = botConfiguration;
+        this.feedbackService = feedbackService;
+        this.attachmentService = attachmentService;
         this.downloadImgService = downloadImgService;
 
         List<BotCommand> commands = List.of(
@@ -88,13 +105,170 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
     private final static Map<Long, LoginDto> LOGIN_DTO_MAP = new HashMap<>();
 
     private void proccessCallbackQuery(CallbackQuery callbackQuery) {
+        MaybeInaccessibleMessage message = callbackQuery.getMessage();
+
+        final Long chatId = message.getChatId();
+        final String data = callbackQuery.getData();
+        final int messageId = message.getMessageId();
+
+        System.out.println("data = " + data);
+
+        User user = userService.getByChatId(chatId);
+
+        if (user == null) {
+            AnswerCallbackQuery login = new AnswerCallbackQuery();
+            login.setText("Avval tizimga kirishingiz kerak 🔐. Kirish uchun /start buyrug'idan foydalaning");
+            login.setShowAlert(true);
+            login.setCallbackQueryId(callbackQuery.getId());
+            executeCustom(login);
+            return;
+        }
+
+        if (data == null) return;
+
+        if (data.startsWith("SEND_FEEDBACK: ")) {
+            sendFeedbackToAdmins(data, chatId, messageId, user, callbackQuery.getId());
+        } else if (data.startsWith("DELETE_FEEDBACK: ")) {
+            deleteFeedback(data, user, messageId, callbackQuery.getId());
+        } else if (data.startsWith("SEND_ATTACHMENT_TO_ANALYZE: ")) {
+            sendAttachmentToAnalyze(data, user, messageId);
+        }
+    }
+
+    private void sendAttachmentToAnalyze(String data, User user, int messageId) {
+
+    }
+
+    private void deleteFeedback(String data, User user, int messageId, String callbackId) {
+        Feedback feedback;
+        try {
+            long feedbackId = Long.parseLong(data.split(" ")[1]);
+            feedback = feedbackService.getById(feedbackId);
+
+            if (feedback == null)
+                throw new Exception("Feedback not found");
+        } catch (Exception e) {
+            AnswerCallbackQuery notFound = new AnswerCallbackQuery();
+            notFound.setText(user.getLanguage().equals(Language.ENGLISH) ? "Feedback not found 🤷‍♂️" :
+                    user.getLanguage().equals(Language.UZBEK) ? "Fikr topilmadi 🤷‍♂️" :
+                            "Комментарий не найден 🤷‍♂️");
+            notFound.setCallbackQueryId(callbackId);
+            executeCustom(notFound);
+            return;
+        }
+
+        feedbackService.deleteById(feedback.getId());
+
+        EditMessageText edit = new EditMessageText();
+        edit.setChatId(user.getChatId());
+        edit.setMessageId(messageId);
+        edit.setText(
+                user.getLanguage().equals(Language.ENGLISH) ?
+                        "Your feedback has been deleted successfully ✅" :
+                        user.getLanguage().equals(Language.UZBEK) ?
+                                "Fikr muvaffaqiyatli o'chirildi ✅" :
+                                "Ваш комментарий был успешно удален ✅"
+        );
+        executeCustom(edit);
+    }
+
+    private void sendFeedbackToAdmins(String data, Long chatId, int messageId, User user, String callbackId) {
+        Long feedbackId = Long.parseLong(data.split(" ")[1]);
+        System.out.println("feedbackId = " + feedbackId);
+        Feedback feedback = feedbackService.getById(feedbackId);
+        Language language = user.getLanguage();
+
+        if (feedback == null) {
+            AnswerCallbackQuery notFound = new AnswerCallbackQuery();
+            notFound.setText(language.equals(Language.ENGLISH) ?
+                    "Feedback not found 🤷‍♂️" : language.equals(Language.UZBEK) ?
+                    "Fikr topilmadi 🤷‍♂️" : "Комментарий не найден 🤷‍♂️");
+            notFound.setCallbackQueryId(data);
+            executeCustom(notFound);
+            return;
+        }
+
+        EditMessageText edit = new EditMessageText();
+        edit.setChatId(chatId);
+        edit.setMessageId(messageId);
+        edit.setText((language.equals(Language.ENGLISH) ?
+                "Your feedback has been sent to admins: " : language.equals(Language.UZBEK) ?
+                "Sizning fikringiz telegram admins bilan yuborildi: " :
+                "Ваш отзыв отправлен администраторам:") + feedback.getText());
+        executeCustom(edit);
+
+        CompletableFuture.runAsync(() -> sendToAdmins(feedback, user));
+
+        CompletableFuture.runAsync(() -> {
+            SendMessage groupMessage = new SendMessage();
+            groupMessage.setText("Yangi fikr qabul qilindi: " + feedback.getText() + "\n" +
+                    String.format(
+                            "Foydalanuvchi - %s. \nTelefon raqami - %s\nYuborilgan vaqti - %s",
+                            user.getFirstName(), user.getPhoneNumber(), feedback.getSendTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                    ));
+            groupMessage.setChatId(botConfiguration.getGroupId());
+            groupMessage.setReplyMarkup(getFeedbackForGroup(feedbackId));
+            executeCustom(groupMessage);
+        });
+    }
+
+    private void sendToAdmins(Feedback feedback, User user) {
+        List<User> admins = userService.getAdmins();
+
+        if (admins.isEmpty())
+            return;
+
+        for (User admin : admins) {
+            Language language = admin.getLanguage();
+
+            SendMessage message = new SendMessage();
+            message.setText(language.equals(Language.ENGLISH) ?
+                    "New feedback was received: " + feedback.getText() + "\n" +
+                            String.format(
+                                    "Name of sender - %s. \nPhone number - %s\nSent at - %s",
+                                    user.getFirstName(), user.getPhoneNumber(), feedback.getSendTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                            ) : language.equals(Language.UZBEK) ?
+                    "Yangi fikr qabul qilindi: " + feedback.getText() + "\n" +
+                            String.format(
+                                    "Foydalanuvchi - %s. \nTelefon raqami - %s\nYuborilgan vaqti - %s",
+                                    user.getFirstName(), user.getPhoneNumber(), feedback.getSendTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                            ) :
+                    "Новый отзыв получен: " + feedback.getText() + "\n" +
+                            String.format(
+                                    "Имя отправителя - %s. \nНомер телефона - %s\nОтправлено - %s",
+                                    user.getFirstName(), user.getPhoneNumber(), feedback.getSendTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                            ));
+            message.setChatId(admin.getChatId());
+            executeCustom(message);
+        }
+    }
+
+    private void executeCustom(EditMessageText edit) {
+        try {
+            execute(edit);
+        } catch (Exception e) {
+            log.error("Error occurred: {}", e.getMessage());
+        }
+    }
+
+    private void executeCustom(AnswerCallbackQuery callbackQuery) {
+        try {
+            execute(callbackQuery);
+        } catch (Exception e) {
+            log.error("Error occurred: {}", e.getMessage());
+        }
     }
 
     private void proccessUpdate(Message message) {
         final Long chatId = message.getChatId();
+
+        if (chatId.toString().equals(botConfiguration.getGroupId()))
+            return;
+
         final String text = message.getText();
         final int messageId = message.getMessageId();
-        final User user = userService.getByChatId(chatId);
+        User user = userService.getByChatId(chatId);
+        user = user.isDeleted() ? null : user;
         final Operation operation = MP.get(chatId);
 
         if (user == null) {
@@ -116,22 +290,138 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
         final UserRole role = user.getUserRole();
         boolean isUsed = false;
 
+        if (message.hasPhoto()) {
+            handlePhoto(user, messageId, message.getPhoto());
+            return;
+        }
+
         if (text.equals("/start")) {
             switch (role) {
                 case USER -> showUserMenu(chatId, user.getLanguage());
             }
-
             return;
         }
 
         if (role.equals(UserRole.USER)) isUsed = forUserMenu(chatId, messageId, text, user);
 
-        if (isUsed) return;
+        if (isUsed || operation == null)
+            return;
 
         switch (operation) {
             case TEXT_TO_SPEECH -> textToSpeech(chatId, messageId, user, text);
+            case ASK_FEEDBACK_TEXT -> askFeedbackText(chatId, user, text);
+            case TEXT_TO_TEXT_ASKED_TEXT -> textToTextAskedText(chatId, user, text);
             case IMAGE_TO_TEXT_ASKED_IMG_LINK -> imageToTextAskedLink(chatId, messageId, user, text);
         }
+    }
+
+    private void handlePhoto(User user, int messageId, List<PhotoSize> photo) {
+        Operation operation = MP.get(user.getChatId());
+        MP.remove(user.getChatId());
+
+        if (photo.isEmpty() || operation == null)
+            return;
+
+        switch (operation) {
+            case IMAGE_TO_SPEECH_ASKED_IMAGE -> {
+                String url = downloadImgToLocalAndReturnURL(user, photo);
+                imageToSpeech(user, messageId, url);
+            }
+        }
+    }
+
+    private void imageToSpeech(User user, int messageId, String imgURL) {
+        if (imgURL == null) {
+            SendMessage message = new SendMessage();
+            message.setChatId(user.getChatId());
+            message.setText(user.getLanguage().equals(Language.ENGLISH) ? "Send image" :
+                    user.getLanguage().equals(Language.UZBEK) ? "Rasm yuboring" : "Отправьте изображение");
+            executeCustom(message);
+            return;
+        }
+
+        SendPhoto photo = new SendPhoto();
+        photo.setChatId(user.getChatId());
+        photo.setPhoto(
+                new InputFile(
+                        new File(imgURL), "photo_" + user.getChatId() + "_" + Instant.now().getEpochSecond() + ".png"
+                )
+        );
+
+        Attachment save = attachmentService.save(imgURL, user);
+
+        photo.setCaption(user.getLanguage().equals(Language.ENGLISH) ? "Anayze image" :
+                user.getLanguage().equals(Language.UZBEK) ?
+                        "Rasmni analizatsiya qilish" : "Анализировать изображение");
+        photo.setReplyMarkup(getInlineKeyboardMarkupToAskAnalyzeImage(save, user.getLanguage()));
+        executeCustom(photo);
+
+        MP.remove(user.getChatId());
+    }
+
+    private String downloadImgToLocalAndReturnURL(User user, List<PhotoSize> photo) {
+        String fileId = photo.get(photo.size() - 1).getFileId();
+
+        try {
+            GetFile getFile = new GetFile();
+            getFile.setFileId(fileId);
+
+            var file = execute(getFile);
+            String filePath = file.getFilePath();
+
+            String url = "https://api.telegram.org/file/bot" + getBotToken() + "/" + filePath;
+
+            RestTemplate restTemplate = new RestTemplate();
+            byte[] imageBytes = restTemplate.getForObject(url, byte[].class);
+
+            assert imageBytes != null;
+
+            String baseURL = "src/main/resources/static/";
+
+            if (!Files.exists(Paths.get(baseURL)))
+                Files.createDirectory(Paths.get(baseURL));
+
+            String fileName = baseURL + "photo_" + user.getChatId() + "_" + Instant.now().getEpochSecond() + ".png";
+            Files.write(Paths.get(fileName), imageBytes);
+
+            return fileName;
+        } catch (TelegramApiException | IOException e) {
+            log.error("Error occurred: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private void askFeedbackText(Long chatId, User user, String text) {
+        MP.remove(chatId);
+
+        Language language = user.getLanguage();
+
+        Feedback feedback = Feedback.builder()
+                .text(text)
+                .user(user)
+                .isRead(false)
+                .isSend(false)
+                .readTime(null)
+                .sendTime(LocalDateTime.now())
+                .build();
+
+        feedbackService.save(feedback);
+
+        SendMessage feedbackMessage = new SendMessage();
+        feedbackMessage.setChatId(chatId);
+        feedbackMessage.setText(language.equals(Language.ENGLISH) ? "Do you want to send feedback ?" :
+                language.equals(Language.UZBEK) ? "Fikringizni yubormoqchimisiz ?" : "Вы хотите отправить отзыв ?");
+        feedbackMessage.setReplyMarkup(getReplyKeyboardForFeedback(feedback.getId(), language));
+
+        executeCustom(feedbackMessage);
+    }
+
+    private void textToTextAskedText(Long chatId, User user, String text) {
+        MP.remove(chatId);
+        sendMessage(chatId, user.getLanguage().equals(Language.ENGLISH) ? "Processing... ⏳" :
+                user.getLanguage().equals(Language.UZBEK) ? "Yuklanmoqda ... ⏳" : "Обработка ... ⏳");
+
+        sendMessage(chatId, "Done✅🤖");
     }
 
     private void imageToTextAskedLink(Long chatId, int messageId, User user, String text) {
@@ -208,8 +498,20 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
     private boolean forUserMenu(Long chatId, Integer messageId, String text, User user) {
         boolean isUsed = false;
         switch (text) {
+            case "Image to speech 📝" -> {
+                imageToSpeech(chatId, messageId, user);
+                isUsed = true;
+            }
             case "Image to text 📝" -> {
                 imageToText(chatId, messageId, user);
+                isUsed = true;
+            }
+            case "Text to text 📝" -> {
+                textToText(chatId, messageId, user);
+                isUsed = true;
+            }
+            case "Xabar berish 📝", "Feedback 📝", "Отправить сообщение 📝" -> {
+                askFeedback(user);
                 isUsed = true;
             }
             case "Linkni yuborish 📤", "Отправить ссылку 📤", "Send link 📤" -> {
@@ -240,8 +542,65 @@ public class TelegramBot extends TelegramLongPollingBot implements ReplyMarkup, 
                 clearCache(chatId, user);
                 isUsed = true;
             }
+            case "Men haqimda ℹ️", "О себе ℹ️", "About me ℹ️" -> {
+                aboutMe(user);
+                isUsed = true;
+            }
         }
         return isUsed;
+    }
+
+    private void imageToSpeech(Long chatId, Integer messageId, User user) {
+        if (user == null) {
+            sendMessage(chatId, """
+                    Iltimos, /start buyrug'i bilan boshlash
+                    Пожалуйста, /start, чтобы начать
+                    Please, /start to start
+                    """);
+            return;
+        }
+
+        Language language = user.getLanguage();
+        sendMessage(chatId, language.equals(Language.UZBEK) ?
+                "Rasm yuboring" : language.equals(Language.ENGLISH) ?
+                "Send image" : "Введи изображение");
+
+        MP.put(chatId, Operation.IMAGE_TO_SPEECH_ASKED_IMAGE);
+    }
+
+    private void askFeedback(User user) {
+        Language language = user.getLanguage();
+        sendMessage(user.getChatId(), language.equals(Language.UZBEK) ?
+                "Xabar yozing" : language.equals(Language.ENGLISH) ?
+                "Enter your message" : "Напишите ваше сообщение");
+        MP.put(user.getChatId(), Operation.ASK_FEEDBACK_TEXT);
+    }
+
+    private void textToText(Long chatId, int messageId, User user) {
+        if (user == null) {
+            sendMessage(chatId, """
+                    Iltimos, /start buyrug'i bilan boshlash
+                    Пожалуйста, /start, чтобы начать
+                    Please, /start to start
+                    """);
+            return;
+        }
+
+        Language language = user.getLanguage();
+
+        sendMessage(chatId, language.equals(Language.UZBEK) ?
+                "Matnni yuboring" : language.equals(Language.ENGLISH) ?
+                "Enter text" : "Введи текст");
+        MP.put(chatId, Operation.TEXT_TO_TEXT_ASKED_TEXT);
+    }
+
+    private void aboutMe(User user) {
+        SendMessage me = new SendMessage();
+        me.setChatId(user.getChatId());
+        me.setParseMode(ParseMode.MARKDOWNV2);
+        me.setText(userService.aboutMe(user));
+
+        executeCustom(me);
     }
 
     private void sendLinkForImageToText(Long chatId, Integer messageId, User user) {

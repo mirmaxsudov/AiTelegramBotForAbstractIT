@@ -13,4 +13,6 @@ public class BotConfiguration {
     private String botToken;
     @Value("${bot.name}")
     private String botName;
+    @Value("${group.id}")
+    private String groupId;
 }
